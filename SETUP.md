@@ -1,5 +1,22 @@
 # Sure60 — complete setup guide / poora setup
 
+## जल्दी शुरू करें — आपके लिए जरूरी जानकारी
+
+**पूरा updated code:** https://github.com/gcpmsk/Sure-60-20/tree/genspark_ai_developer  
+**Changes / PR:** https://github.com/gcpmsk/Sure-60-20/pull/2
+
+1. Supabase पर नया project बनाइए। नीचे section 1 में दिए `supabase/setup.sql` का **पूरा code** SQL Editor में paste करके Run कीजिए। Raw file: https://raw.githubusercontent.com/gcpmsk/Sure-60-20/genspark_ai_developer/supabase/setup.sql
+2. Supabase → Authentication → Providers → Email में **Confirm email OFF** रखिए, क्योंकि students roll number से register करेंगे। Unverified students का login application reject करती है; database भी उनका classes/tests access block करता है।
+3. Authentication → Users → Add user में अपना **वास्तविक admin email** और **अपना नया private password (12+ characters)** सेट कीजिए। फिर section 2 का SQL अपने email के साथ चलाइए। कोई default working password नहीं रखा गया है।
+4. Cloudflare → Workers & Pages → Create application → **Pages → Connect to Git** → इस GitHub repository को चुनिए। अभी production branch `genspark_ai_developer` रखिए। PR #2 merge करने के बाद `main` भी चुन सकते हैं।
+5. Build command `npm run build`, output `dist`, root खाली, framework Vite, `NODE_VERSION=22`। अपनी `VITE_SUPABASE_URL` और `VITE_SUPABASE_ANON_KEY` section 3 के अनुसार डालिए। Service-role/secret key कभी नहीं डालनी है।
+6. Deploy के बाद असली Cloudflare URL पर `/Avinash` जोड़कर admin panel खोलिए, जैसे `https://YOUR_PROJECT.pages.dev/Avinash`। यह केवल format का उदाहरण है, बनाई गई live site का दावा नहीं। Footer में भी **Avinash** ही दिखाई देगा।
+7. Students → Verify; Batches → Create; Students → Batches → assign; Classes & notes → subject/topic, video और PDF links; Tests & answers → question PDF + answer PDF → review → publish। Website settings में logo, तीनों hero slides, social links और पूरा Karnal campus address बदलिए।
+
+**Admin username:** आपके द्वारा Supabase Auth में बनाया गया email। **Password:** आपका निजी चुना हुआ password। वास्तविक Supabase values के बिना preview में कोई working login नहीं होता। Credentials Supabase Auth से बदलते हैं; profile का display username बदलने से login email नहीं बदलता।
+
+**वीडियो सीमा:** YouTube link पूरी तरह छिपाना, encrypted करके extraction रोकना या screen recording/download की 100% रोकथाम संभव नहीं है। Unlisted embedding समर्थित है; DRM video hosting अलग integration है।
+
 ## What is ready
 
 React + Vite responsive website, a three-slide animated hero, batch filters, student signup/sign-in, admin verification, assigned subject-wise lessons and PDF links, timed MCQ practice, automatic/server-side grading, result cards, full searchable rankings, and an admin workspace linked as **Avinash** in the footer. Branding, campus address, photo/logo URLs, social links, courses, lessons and tests are editable from admin.
@@ -21,7 +38,7 @@ React + Vite responsive website, a three-slide animated hero, batch filters, stu
 
 Students use roll numbers rather than real emails. The application maps `S60001` to the internal authentication identifier `s60001@students.sure60.app`. This is not an email inbox.
 
-In **Authentication → Sign In / Providers → Email**, enable email/password signup and **turn OFF Confirm email**. Otherwise the placeholder student email cannot receive confirmation and login will fail. Admin approval is separate: every new profile is unverified by default, enforced in SQL. Students can authenticate into an approval-only screen but cannot access any lessons, questions, test attempts or rankings until verified.
+In **Authentication → Sign In / Providers → Email**, enable email/password signup and **turn OFF Confirm email**. Otherwise the placeholder student email cannot receive confirmation and login will fail. Admin approval is separate: every new profile is unverified by default, enforced in SQL. After signup the application signs students out. Sign-in is rejected until verification. Even if someone directly obtains an Auth session, SQL blocks all lessons, questions, test attempts and rankings until verified.
 
 Roll numbers must be unique: 3–30 letters, digits, dots, underscores or hyphens. They are stored lowercase. Give students their roll numbers before signup and verify their identity before approving them. There is no self-service email recovery for roll-number accounts; an administrator must perform password resets. Use a trusted private workflow for resets. Enable suitable Supabase Auth rate limits. If you later enable CAPTCHA in Supabase, add a matching CAPTCHA widget before launch (not included in this version).
 
@@ -52,7 +69,7 @@ from public.profiles
 where role = 'admin';
 ```
 
-7. On the website, scroll to the very bottom and click **Avinash**.
+7. Open **`https://YOUR_ACTUAL_PROJECT_NAME.pages.dev/Avinash`**, or scroll to the footer and click **Avinash**. Reloading this route works on Cloudflare Pages through the included SPA redirect.
 8. **Username:** your real admin email from step 2. **Password:** the private password you set in step 3.
 9. Only accounts with database `role='admin' AND verified=true` get admin privileges. Merely knowing the footer entry does not grant access.
 
@@ -62,7 +79,7 @@ Admin login username is the Supabase Auth **email**, not `profiles.username`. Ch
 
 You can also reset from Supabase Authentication → Users using the supported user-management/recovery controls for your dashboard version. If the dashboard does not expose direct password changes, use the server-side Auth Admin API `auth.admin.updateUserById(userId, { email, password })` from a trusted local administrative script with a service-role key kept exclusively server-side. Never add that key to this frontend. Do not edit `auth.users.encrypted_password` manually. Updating a display username in `profiles` alone does not change the login email.
 
-If `Avinash` is hidden, use SQL Editor:
+Hiding the footer entry does not disable the secure `/Avinash` route. To show the footer link again, use SQL Editor:
 
 ```sql
 update public.site_settings
@@ -110,7 +127,7 @@ The complete code is in https://github.com/gcpmsk/Sure-60-20.
 
 The included `public/_redirects` handles SPA navigation. `public/_headers` adds basic security headers. Production source maps are not enabled. The public Supabase key is expected to be visible; RLS and function permissions are the security boundary.
 
-If you later merge PR #1 into `main`, you may change Pages' production branch to `main`. Until then, choose `genspark_ai_developer`, not the original scaffold on main.
+PR #1 is already merged. The new direct `/Avinash` route and regression-tested refinements are in PR #2. Choose `genspark_ai_developer` for this update, or merge PR #2 before selecting `main`.
 
 ## 4. Daily admin workflow
 
@@ -120,7 +137,7 @@ If you later merge PR #1 into `main`, you may change Pages' production branch to
 - Admin: Avinash → Students → **Verify**.
 - Admin: Batches → **New batch**, set title, exam category, price, mode, subject list and optional banner URL.
 - Admin: Students → **Batches** → enable the enrolled batch. Verification alone does not grant all batches.
-- Student: sign out/in to refresh verification → **My Learning** → assigned batch → subject.
+- Student: sign out/in to refresh verification → **My Batches** → assigned batch → subject.
 - Revoking verification blocks protected database reads and new test operations. Already downloaded media cannot be recalled.
 - Deleting a batch also deletes its lessons, enrollments and batch-specific tests/results. Use care; backups are recommended.
 - Enrollment is manual; a payment gateway is not included.
@@ -169,7 +186,7 @@ Answer PDF:
 ### Timing, grading and rankings
 
 - One attempt per student per test; restarting/reloading cannot reset a live deadline.
-- Every option selection is saved. The browser shows a running countdown and submits at zero or on explicit confirmation.
+- Every option selection is saved through a serialized queue, preventing older requests from overwriting newer answers. A save status and Retry save button report connectivity problems. The browser shows a running countdown and submits at zero or on explicit confirmation.
 - Before the deadline, a manual submission includes current answers. After the deadline, SQL ignores newly supplied answers and grades only answers saved before expiry.
 - SQL grades against `private.answer_keys`; students cannot download production answer keys or write their own scores.
 - Cron finalizes closed-browser attempts within roughly one minute. If cron is disabled, expired attempts finalize when that test/leaderboard is next requested.
@@ -188,10 +205,11 @@ cp .env.example .env
 npm run dev -- --port 3000
 npm run build
 npm test
-npx playwright test
+npx playwright install chromium
+npm run test:browser
 ```
 
-`.env` is ignored by git. Node 22 recommended. Browser tests use an existing local preview on port 3000. `tests/database.test.js` uses PGlite and a minimal Supabase-auth fixture to test real PostgreSQL policies/functions locally; it is not a substitute for the launch smoke test on your real Supabase project. Run `npm run test:db` after installing dependencies.
+`.env` is ignored by git. Node 22 recommended. Browser tests use an existing local preview on port 3000. `tests/database.test.js` uses PGlite and a minimal Supabase-auth fixture to test real PostgreSQL policies/functions locally; it is not a substitute for the launch smoke test on your real Supabase project. Run `npm run test:db` after installing dependencies. Test scripts cap the JavaScript heap for small development machines. Browser tests need Chromium and its system libraries, run against the **unconfigured demo** at port 3000, and cover `/Avinash` reloads, mobile navigation, setup-gated signup, manual grading and automatic expiry. They do not pretend to test a real Supabase Auth project. Start the preview separately; browser tests do not start a server automatically.
 
 ### Launch smoke test (required on your real project)
 
@@ -208,4 +226,4 @@ npx playwright test
 
 The hero photo was retrieved through the platform's CC/PD-filtered image search from Needpix, titled “Students, education, school, young, college”. Source: https://www.needpix.com/photo/download/1155176/students-education-school-young-college-learning-happy-study-group-university-people-girl-female-person-book-knowledge-class-classroom-learn-friends-studying-woman-smiling-together-lesson-adult-boy-high-teenager-caucasian-child-cheerful-youth-library-hispanic-mexico-casual-latin-cute-brunette-male-academic-mexican-technology-20s-notebook-computer-ethnic-indoors-handsome-guy-copy-man-baja-california-tijuana-haircut-long-mustache-business-lifestyle-hipster-businessman-face-fashion-millennial. Replace it with your own campus photo for authentic branding. No image-generation tool was used. CSS shapes and Lucide icons make the other visuals. Avatar initials/stars in the hero are decorative community artwork, not customer review data.
 
-No real Supabase project, admin account, real enrollment data, exact street address, or production Cloudflare deployment is created without your account configuration. The included code and SQL implement those workflows, while the unconfigured preview demonstrates layout and a local quiz only.
+No real Supabase project, admin account, real enrollment data, exact street address, or production Cloudflare deployment is created without your account configuration. The SQL policy/grading suite runs locally against PostgreSQL; real Supabase Auth, live cron installation and YouTube permissions must still be smoke-tested after account setup. The included code and SQL implement those workflows, while the unconfigured preview demonstrates layout and a local quiz only.
