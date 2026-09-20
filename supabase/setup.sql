@@ -1,4 +1,4 @@
--- SURE60: paste this ENTIRE file in a NEW Supabase project's SQL Editor, then Run.
+-- SURE60: run this ENTIRE file in Supabase SQL Editor (new or existing project).
 -- No passwords, privileged API keys or client-readable answer keys are stored here.
 begin;
 create schema if not exists private;
@@ -258,6 +258,124 @@ begin
  where a.test_id=p_test and a.submitted_at is not null and p.verified
  order by a.score desc,a.wrong asc,(a.submitted_at-a.started_at) asc,a.id asc;
 end $$;
+
+-- Explicit batch -> subjects -> ordered classes, including safe legacy migration.
+create table if not exists public.subjects (
+ id uuid primary key default gen_random_uuid(),
+ batch_id uuid not null references public.batches(id) on delete cascade,
+ name text not null check(length(trim(name)) between 1 and 100),
+ position integer not null default 1 check(position>0),
+ minimum_classes integer not null default 5 check(minimum_classes in (4,5)),
+ created_at timestamptz not null default now(), unique(id,batch_id)
+);
+create unique index if not exists subjects_batch_name_idx on public.subjects(batch_id,lower(trim(name)));
+alter table public.lessons add column if not exists subject_id uuid;
+alter table public.lessons add column if not exists published boolean not null default true;
+alter table public.lessons add column if not exists pdf_path text not null default '';
+insert into public.subjects(batch_id,name)
+ select distinct batch_id,coalesce(nullif(trim(subject),''),'General') from public.lessons where subject_id is null
+ on conflict do nothing;
+insert into public.subjects(batch_id,name)
+ select b.id,trim(part) from public.batches b,
+ lateral regexp_split_to_table(b.subjects,'[·,;\n]+') part
+ where length(trim(part)) between 1 and 100 and not exists(select 1 from public.subjects s where s.batch_id=b.id) on conflict do nothing;
+update public.lessons l set subject_id=s.id from public.subjects s
+ where l.subject_id is null and s.batch_id=l.batch_id
+ and lower(trim(s.name))=lower(coalesce(nullif(trim(l.subject),''),'General'));
+do $$ begin
+ if not exists(select 1 from pg_constraint where conname='lessons_subject_batch_fk' and conrelid='public.lessons'::regclass) then
+  alter table public.lessons add constraint lessons_subject_batch_fk
+   foreign key(subject_id,batch_id) references public.subjects(id,batch_id) on delete cascade;
+ end if;
+end $$;
+alter table public.lessons alter column subject_id set not null;
+create index if not exists lessons_subject_order_idx on public.lessons(subject_id,position);
+create or replace function private.validate_lesson() returns trigger
+language plpgsql set search_path='' as $$
+begin
+ select name into new.subject from public.subjects where id=new.subject_id and batch_id=new.batch_id;
+ if new.subject is null then raise exception 'Choose a subject from this batch'; end if;
+ if new.position<1 or length(trim(new.title))=0 then raise exception 'Class name and positive order required'; end if;
+ if new.published and length(trim(new.video_url))=0 then raise exception 'Add a video before publishing this class'; end if;
+ if new.pdf_path<>'' and (split_part(new.pdf_path,'/',1)<>new.batch_id::text or split_part(new.pdf_path,'/',2)<>new.id::text) then
+  raise exception 'PDF must belong to this batch and class';
+ end if;
+ return new;
+end $$;
+drop trigger if exists sure60_validate_lesson on public.lessons;
+create trigger sure60_validate_lesson before insert or update on public.lessons
+ for each row execute function private.validate_lesson();
+alter table public.subjects enable row level security;
+drop policy if exists sure60_subjects_read on public.subjects;
+create policy sure60_subjects_read on public.subjects for select to authenticated using(private.can_access_batch(batch_id));
+drop policy if exists sure60_subjects_admin on public.subjects;
+create policy sure60_subjects_admin on public.subjects for all to authenticated using(private.is_admin()) with check(private.is_admin());
+revoke all on public.subjects from anon,authenticated;
+grant select,insert,update,delete on public.subjects to authenticated;
+drop policy if exists sure60_lessons_read on public.lessons;
+create policy sure60_lessons_read on public.lessons for select to authenticated
+ using(private.is_admin() or (published and private.can_access_batch(batch_id)));
+
+create or replace function public.admin_create_subject(p_batch uuid,p_name text,p_classes integer default 5) returns uuid
+language plpgsql security definer set search_path='' as $$
+declare v_subject uuid; n integer;
+begin
+ if not private.is_admin() then raise exception 'Administrator access required'; end if;
+ if p_classes is null or p_classes not in (4,5) then raise exception 'Choose 4 or 5 starter classes'; end if;
+ insert into public.subjects(batch_id,name,minimum_classes,position)
+ values(p_batch,trim(p_name),p_classes,coalesce((select max(position)+1 from public.subjects where batch_id=p_batch),1)) returning id into v_subject;
+ for n in 1..p_classes loop
+  insert into public.lessons(batch_id,subject_id,subject,title,video_url,position,published)
+  values(p_batch,v_subject,trim(p_name),'Class '||n,'',n,false);
+ end loop;
+ return v_subject;
+end $$;
+revoke all on function public.admin_create_subject(uuid,text,integer) from public,anon,authenticated;
+grant execute on function public.admin_create_subject(uuid,text,integer) to authenticated;
+
+-- Passwords stay hashed in auth.users; this SQL-Editor-only helper grants the admin role.
+-- First create the email/password with Authentication > Users > Add user, then call:
+-- select private.promote_admin('YOUR_REAL_ADMIN_EMAIL');
+create or replace function private.promote_admin(p_email text) returns void
+language plpgsql security definer set search_path='' as $$
+begin
+ update public.profiles set role='admin',verified=true,full_name='Administrator'
+ where id=(select id from auth.users where lower(email)=lower(trim(p_email)));
+ if not found then raise exception 'Create this account in Supabase Authentication first'; end if;
+end $$;
+
+-- Enable in Supabase Authentication > Hooks > Custom Access Token, after creating admin.
+-- Blocks token issuance AND refresh until the table's verified flag is explicitly true.
+create or replace function public.approved_access_token_hook(event jsonb) returns jsonb
+language plpgsql stable security definer set search_path='' as $$
+begin
+ if not exists(select 1 from public.profiles where id=(event->>'user_id')::uuid and verified=true) then
+  return jsonb_build_object('error',jsonb_build_object('http_code',403,'message','Account awaiting administrator approval.'));
+ end if;
+ return event;
+end $$;
+revoke all on function public.approved_access_token_hook(jsonb) from public,anon,authenticated;
+grant usage on schema public to supabase_auth_admin;
+grant execute on function public.approved_access_token_hook(jsonb) to supabase_auth_admin;
+
+-- Private PDF storage. Policies check enrollment, approval and published lesson ownership.
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
+ values('class-notes','class-notes',false,15728640,array['application/pdf'])
+ on conflict(id) do update set public=false,file_size_limit=excluded.file_size_limit,allowed_mime_types=excluded.allowed_mime_types;
+drop policy if exists sure60_notes_read on storage.objects;
+create policy sure60_notes_read on storage.objects for select to authenticated using(
+ bucket_id='class-notes' and (private.is_admin() or exists(
+  select 1 from public.lessons l where l.pdf_path=name and l.published and private.can_access_batch(l.batch_id)
+ )));
+drop policy if exists sure60_notes_insert on storage.objects;
+create policy sure60_notes_insert on storage.objects for insert to authenticated
+ with check(bucket_id='class-notes' and private.is_admin());
+drop policy if exists sure60_notes_update on storage.objects;
+create policy sure60_notes_update on storage.objects for update to authenticated
+ using(bucket_id='class-notes' and private.is_admin()) with check(bucket_id='class-notes' and private.is_admin());
+drop policy if exists sure60_notes_delete on storage.objects;
+create policy sure60_notes_delete on storage.objects for delete to authenticated
+ using(bucket_id='class-notes' and private.is_admin());
 
 -- Security-definer functions must NOT inherit PostgreSQL's PUBLIC execute default.
 revoke all on all functions in schema private from public,anon,authenticated;
