@@ -273,12 +273,12 @@ alter table public.lessons add column if not exists subject_id uuid;
 alter table public.lessons add column if not exists published boolean not null default true;
 alter table public.lessons add column if not exists pdf_path text not null default '';
 insert into public.subjects(batch_id,name)
- select distinct batch_id,coalesce(nullif(trim(subject),''),'General') from public.lessons
+ select distinct batch_id,coalesce(nullif(trim(subject),''),'General') from public.lessons where subject_id is null
  on conflict do nothing;
 insert into public.subjects(batch_id,name)
  select b.id,trim(part) from public.batches b,
  lateral regexp_split_to_table(b.subjects,'[·,;\n]+') part
- where length(trim(part)) between 1 and 100 on conflict do nothing;
+ where length(trim(part)) between 1 and 100 and not exists(select 1 from public.subjects s where s.batch_id=b.id) on conflict do nothing;
 update public.lessons l set subject_id=s.id from public.subjects s
  where l.subject_id is null and s.batch_id=l.batch_id
  and lower(trim(s.name))=lower(coalesce(nullif(trim(l.subject),''),'General'));
