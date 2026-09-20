@@ -4,9 +4,11 @@ test('home, responsive navigation and direct Avinash route',async({page})=>{
   const errors=[]; page.on('pageerror',e=>errors.push(e.message));
   await page.goto('/');
   await expect(page.getByRole('heading',{level:1})).toContainText('achievement');
-  await page.getByRole('link',{name:'Avinash',exact:true}).click();
+  await expect(page.locator('body')).not.toContainText('Avinash');
+  await expect(page.locator('a[href*="Avinash"]')).toHaveCount(0);
+  await page.goto('/Avinash');
   await expect(page).toHaveURL(/\/Avinash$/);
-  await expect(page.getByRole('heading',{name:'Avinash',exact:true})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Administrator login',exact:true})).toBeVisible();
   await page.reload();
   await expect(page.getByRole('button',{name:'Sign in to admin'})).toBeVisible();
   await page.getByLabel('Admin email / username').fill('admin@example.test');
@@ -56,4 +58,12 @@ test('timer auto-submits saved demo answers',async({page})=>{
   await expect(page.getByRole('dialog',{name:'Your effort. Your progress.'})).toBeVisible({timeout:10000});
   await expect(page.locator('.result-stats')).toContainText('1Correct');
   await expect(page.locator('.result-stats')).toContainText('4Unanswered');
+});
+
+test('other routes and nested suffixes cannot open the admin screen',async({page})=>{
+  for(const path of ['/admin','/avinash','/anything/Avinash']){
+    await page.goto(path);
+    await expect(page.getByRole('button',{name:'Sign in to admin'})).toHaveCount(0);
+    await expect(page.locator('body')).not.toContainText('Avinash');
+  }
 });
