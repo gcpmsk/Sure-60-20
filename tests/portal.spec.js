@@ -3,7 +3,7 @@ import {test,expect} from '@playwright/test';
 test('home, responsive navigation and direct Avinash route',async({page})=>{
   const errors=[]; page.on('pageerror',e=>errors.push(e.message));
   await page.goto('/');
-  await expect(page.getByRole('heading',{level:1})).toContainText('In focus.');
+  await expect(page.getByRole('heading',{level:1})).toContainText('In full colour.');
   await expect(page.locator('body')).not.toContainText('Avinash');
   await expect(page.locator('a[href*="Avinash"]')).toHaveCount(0);
   await page.goto('/Avinash');
@@ -211,7 +211,7 @@ test('3D controls, carousel, campus view and motion toggle',async({page})=>{
   await expect(image).toBeVisible();
   await expect.poll(()=>image.evaluate(img=>img.naturalWidth)).toBeGreaterThan(0);
   await page.getByRole('button',{name:'3D view',exact:true}).click();
-  await expect(page.locator('.sculpture-ring i')).toHaveCount(12);
+  await expect(page.locator('.sculpture-ring i')).toHaveCount(36);
 });
 
 test('batch filters, details, FAQ and contact retain their functions',async({page})=>{
@@ -263,4 +263,34 @@ test('touch rotates the sculpture and offscreen motion sleeps',async({browser})=
   await page.locator('#contact').scrollIntoViewIfNeeded();
   await expect(scene).toHaveAttribute('data-active','false');
   await context.close();
+});
+
+
+test('colour palettes update sculpture and animated typography without changing white background',async({page})=>{
+  await page.goto('/');
+  const home=page.locator('.home-experience');
+  for(const palette of ['Sunset','Ocean','Spectrum']){
+    const button=page.getByRole('button',{name:`${palette} colours`,exact:true});
+    await button.click();
+    await expect(button).toHaveAttribute('aria-pressed','true');
+    await expect(home).toHaveAttribute('data-palette',palette.toLowerCase());
+    expect(await page.locator('.hero').evaluate(el=>getComputedStyle(el).backgroundColor)).toBe('rgb(255, 255, 255)');
+  }
+  await expect(page.locator('.sculpture-ring')).toHaveCount(2);
+  await expect(page.locator('.hero-note,.chapter-card')).toHaveCount(0);
+  await page.getByRole('button',{name:'Pause animations',exact:true}).click();
+  const states=await home.evaluate(el=>Array.from(el.querySelectorAll('*')).filter(node=>getComputedStyle(node).animationName!=='none').map(node=>getComputedStyle(node).animationPlayState));
+  expect(states.every(state=>state.split(',').every(value=>value.trim()==='paused'))).toBe(true);
+  await page.getByRole('button',{name:'Next slide',exact:true}).click();
+  await expect(page.getByRole('heading',{level:1})).toContainText('Limitless you.');
+  await expect(page.locator('.highlight .animated-letter').first()).toBeVisible();
+});
+
+test('reduced motion remains safe when playback is explicitly enabled',async({page})=>{
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await page.goto('/');
+  await page.getByRole('button',{name:'Play animations',exact:true}).click();
+  await page.getByRole('button',{name:'Rotate 3D scene right',exact:true}).click();
+  expect(await page.locator('.scene-parallax').evaluate(el=>getComputedStyle(el).transform)).toBe('none');
+  expect(await page.locator('.highlight .animated-letter').first().evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
 });
