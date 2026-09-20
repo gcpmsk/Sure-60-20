@@ -7,7 +7,13 @@ test('Supabase schema permissions, enrollment and exam lifecycle', async t => {
   const db = new PGlite();
   t.after(() => db.close());
   await db.exec(`
-    create role anon; create role authenticated;
+    create role anon; create role authenticated; create role supabase_auth_admin;
+    create schema storage;
+    create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
+    create table storage.objects(id uuid default gen_random_uuid(),bucket_id text,name text);
+    alter table storage.objects enable row level security;
+    grant usage on schema storage to authenticated;
+    grant select,insert,update,delete on storage.objects to authenticated;
     create schema auth;
     create table auth.users(id uuid primary key, email text, raw_user_meta_data jsonb default '{}');
     create function auth.uid() returns uuid language sql stable as
@@ -63,10 +69,44 @@ test('Supabase schema permissions, enrollment and exam lifecycle', async t => {
   await t.test('admin creates batches, assignments and subject lessons',async()=>{
     batch=(await as('admin',()=>db.query("insert into public.batches(title) values('SSC') returning id"))).rows[0].id;
     await as('admin',()=>db.query('insert into public.enrollments(student_id,batch_id) values($1,$2)',[ids.student,batch]));
-    await as('admin',()=>db.query("insert into public.lessons(batch_id,title,subject,video_url) values($1,'Algebra','Maths','https://youtu.be/abcdefghijk')",[batch]));
+    const subject=await as('admin',()=>rpc('admin_create_subject',[batch,'Maths',5]));
+    const drafts=(await as('admin',()=>db.query('select * from public.lessons where subject_id=$1',[subject]))).rows;
+    assert.equal(drafts.length,5); assert.ok(drafts.every(l=>!l.published));
+    assert.equal((await as('student',()=>db.query('select * from public.lessons'))).rows.length,0);
+    await as('admin',()=>db.query("update public.lessons set title='Algebra',video_url='https://youtu.be/abcdefghijk',published=true where id=$1",[drafts[0].id]));
     assert.equal((await as('student',()=>db.query('select * from public.lessons'))).rows.length,1);
     assert.equal((await as('other',()=>db.query('select * from public.lessons'))).rows.length,0);
     assert.equal((await as('pending',()=>db.query('select * from public.lessons'))).rows.length,0);
+  });
+  await t.test('approval hook refuses pending tokens and refresh, admin helper is private',async()=>{
+    const pending=await rpc('approved_access_token_hook',[{user_id:ids.pending,claims:{}}]);
+    assert.equal(pending.error.http_code,403);
+    const allowed=await rpc('approved_access_token_hook',[{user_id:ids.student,claims:{role:'authenticated'}}]);
+    assert.equal(allowed.claims.role,'authenticated');
+    await assert.rejects(as('pending',()=>rpc('approved_access_token_hook',[{user_id:ids.admin}])),/permission denied/);
+    await assert.rejects(as('pending',()=>db.query('select private.promote_admin($1)',['pending@example.test'])),/permission denied/);
+  });
+  await t.test('subjects support multiple courses and cannot cross batch boundaries',async()=>{
+    const subject=await as('admin',()=>rpc('admin_create_subject',[batch,'English',4]));
+    assert.equal((await as('admin',()=>db.query('select * from public.lessons where subject_id=$1',[subject]))).rows.length,4);
+    await assert.rejects(as('admin',()=>rpc('admin_create_subject',[batch,' maths ',5])),/duplicate key/);
+    await assert.rejects(as('student',()=>rpc('admin_create_subject',[batch,'Hacked',5])),/Administrator access required/);
+    const otherBatch=(await as('admin',()=>db.query("insert into public.batches(title) values('Other') returning id"))).rows[0].id;
+    await assert.rejects(as('admin',()=>db.query("insert into public.lessons(batch_id,subject_id,subject,title,video_url) values($1,$2,'English','Invalid','video')",[otherBatch,subject])),/Choose a subject/);
+    assert.equal((await as('pending',()=>db.query('select * from public.subjects'))).rows.length,0);
+    assert.equal((await as('other',()=>db.query('select * from public.subjects'))).rows.length,0);
+  });
+  await t.test('private PDF storage checks enrollment, publication and verified flag',async()=>{
+    const lesson=(await db.query('select * from public.lessons where published=true limit 1')).rows[0];
+    const path=`${batch}/${lesson.id}/notes.pdf`;
+    await as('admin',()=>db.query('update public.lessons set pdf_path=$1 where id=$2',[path,lesson.id]));
+    await as('admin',()=>db.query("insert into storage.objects(bucket_id,name) values('class-notes',$1)",[path]));
+    assert.equal((await as('student',()=>db.query('select * from storage.objects'))).rows.length,1);
+    for(const name of ['pending','other']) assert.equal((await as(name,()=>db.query('select * from storage.objects'))).rows.length,0);
+    await assert.rejects(as('student',()=>db.query("insert into storage.objects(bucket_id,name) values('class-notes','hack.pdf')")),/row-level security/);
+    await as('admin',()=>db.query('update public.lessons set published=false where id=$1',[lesson.id]));
+    assert.equal((await as('student',()=>db.query('select * from storage.objects'))).rows.length,0);
+    await as('admin',()=>db.query('update public.lessons set published=true where id=$1',[lesson.id]));
   });
   await t.test('question publishing is atomic and answer key stays private',async()=>{
     testId=await makeTest(); privateTest=await makeTest({batch_id:batch});
@@ -122,6 +162,8 @@ test('Supabase schema permissions, enrollment and exam lifecycle', async t => {
     assert.ok(result.submitted_at); assert.equal(result.unanswered,3);
     await as('admin',()=>rpc('admin_update_student',[ids.student,false]));
     assert.equal((await as('student',()=>db.query('select * from public.lessons'))).rows.length,0);
+    assert.equal((await as('student',()=>db.query('select * from storage.objects'))).rows.length,0);
+    assert.equal((await rpc('approved_access_token_hook',[{user_id:ids.student}])).error.http_code,403);
   });
   await t.test('admin may hide an existing test without inserting a partial row',async()=>{
     await as('admin',()=>db.query('update public.tests set published=false where id=$1',[testId]));
