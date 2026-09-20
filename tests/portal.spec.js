@@ -3,7 +3,7 @@ import {test,expect} from '@playwright/test';
 test('home, responsive navigation and direct Avinash route',async({page})=>{
   const errors=[]; page.on('pageerror',e=>errors.push(e.message));
   await page.goto('/');
-  await expect(page.getByRole('heading',{level:1})).toContainText('achievement');
+  await expect(page.getByRole('heading',{level:1})).toContainText('In focus.');
   await expect(page.locator('body')).not.toContainText('Avinash');
   await expect(page.locator('a[href*="Avinash"]')).toHaveCount(0);
   await page.goto('/Avinash');
@@ -187,4 +187,80 @@ test('pending student login is rejected and approved student sees subject classe
   await expect(page.getByRole('heading',{name:'Grammar',exact:true})).toHaveCount(0);
   await page.getByRole('button',{name:'Watch',exact:true}).click();
   await expect(page.locator('iframe')).toHaveAttribute('src',/youtube-nocookie/);
+});
+
+
+test('3D controls, carousel, campus view and motion toggle',async({page})=>{
+  await page.goto('/');
+  const scene=page.locator('.learning-scene');
+  await expect(page.getByRole('heading',{level:1})).toHaveAccessibleName('Your future. In focus.');
+  await page.getByRole('button',{name:'Rotate 3D scene right'}).click();
+  await expect.poll(()=>scene.evaluate(el=>el.style.getPropertyValue('--yaw'))).toBe('12deg');
+  await page.getByRole('button',{name:'Reset 3D scene'}).click();
+  await expect.poll(()=>scene.evaluate(el=>el.style.getPropertyValue('--yaw'))).toBe('0deg');
+  await page.getByRole('button',{name:'Show slide 2'}).click();
+  await expect(page.getByRole('heading',{level:1})).toHaveAccessibleName('Small steps. Big possibilities.');
+  await expect(scene).toHaveAttribute('data-chapter','1');
+  await page.getByRole('button',{name:'Pause animations',exact:true}).click();
+  await expect(scene).toHaveAttribute('data-active','false');
+  await expect(page.getByRole('button',{name:'Rotate 3D scene right'})).toBeDisabled();
+  await page.getByRole('button',{name:'Play animations',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Rotate 3D scene right'})).toBeEnabled();
+  await page.getByRole('button',{name:'Campus view',exact:true}).click();
+  const image=page.locator('.campus-scene img');
+  await expect(image).toBeVisible();
+  await expect.poll(()=>image.evaluate(img=>img.naturalWidth)).toBeGreaterThan(0);
+  await page.getByRole('button',{name:'3D view',exact:true}).click();
+  await expect(page.locator('.sculpture-ring i')).toHaveCount(12);
+});
+
+test('batch filters, details, FAQ and contact retain their functions',async({page})=>{
+  await page.goto('/');
+  await page.getByRole('button',{name:'Explore Our Batches'}).click();
+  await page.getByRole('button',{name:'Banking',exact:true}).click();
+  await expect(page.locator('.batch-card')).toHaveCount(1);
+  await expect(page.locator('.batch-card')).toContainText('Banking & Finance');
+  await page.getByRole('button',{name:'View Batch: Banking & Finance'}).click();
+  await expect(page.getByRole('dialog')).toContainText('sample batch');
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button',{name:'Railways',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'New batches coming soon'})).toBeVisible();
+  await page.getByRole('button',{name:'All Exams',exact:true}).click();
+  await expect(page.locator('.batch-card')).toHaveCount(3);
+  await page.getByText('Can I learn on my phone?',{exact:true}).click();
+  await expect(page.locator('details[open]')).toContainText('tablet and computer');
+  await page.getByRole('button',{name:'Talk to us',exact:true}).click();
+  await expect(page.getByRole('dialog')).toContainText('Karnal');
+});
+
+test('white canvas, responsive layouts and reduced-motion preference',async({page})=>{
+  await page.emulateMedia({reducedMotion:'reduce'});
+  for(const width of [320,390,600,768,1024,1440]){
+    await page.setViewportSize({width,height:900});
+    await page.goto('/');
+    await expect(page.getByRole('heading',{level:1})).toBeVisible();
+    await expect(page.getByRole('button',{name:'Play animations',exact:true})).toBeVisible();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    expect(await page.locator('.hero').evaluate(el=>getComputedStyle(el).backgroundColor)).toBe('rgb(255, 255, 255)');
+    expect(await page.locator('.sculpture-float').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
+    await page.locator('#contact').scrollIntoViewIfNeeded();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  }
+});
+
+test('touch rotates the sculpture and offscreen motion sleeps',async({browser})=>{
+  const context=await browser.newContext({viewport:{width:390,height:844},hasTouch:true,isMobile:true});
+  const page=await context.newPage();
+  await page.goto('/');
+  const stage=page.locator('.scene-stage'),scene=page.locator('.learning-scene');
+  await stage.scrollIntoViewIfNeeded();
+  // Dispatch touch-type pointer events with the same browser event path as a drag.
+  await stage.dispatchEvent('pointerdown',{pointerId:1,pointerType:'touch',clientX:100,clientY:200});
+  await stage.dispatchEvent('pointermove',{pointerId:1,pointerType:'touch',clientX:164,clientY:200});
+  await stage.dispatchEvent('pointerup',{pointerId:1,pointerType:'touch',clientX:164,clientY:200});
+  await expect.poll(()=>scene.evaluate(el=>el.style.getPropertyValue('--yaw'))).toBe('16deg');
+  await page.locator('#contact').scrollIntoViewIfNeeded();
+  await expect(scene).toHaveAttribute('data-active','false');
+  await context.close();
 });
