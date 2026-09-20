@@ -133,7 +133,7 @@ test('admin creates five classes, uploads notes and parses real question PDFs',a
   await page.goto('/Avinash');
   await expect(page.getByRole('heading',{name:'Make great learning happen.'})).toBeVisible();
   await expect(page.locator('body')).not.toContainText('Avinash');
-  await page.getByRole('button',{name:'Classes & notes',exact:true}).click();
+  await page.locator('.admin-nav').getByRole('button',{name:'Classes & notes',exact:true}).click();
   await page.getByRole('button',{name:'Add subject',exact:true}).click();
   await page.getByLabel('Subject name').fill('Maths');
   await page.getByRole('button',{name:'Save subject',exact:true}).click();
